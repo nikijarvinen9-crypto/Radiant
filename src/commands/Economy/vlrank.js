@@ -3,11 +3,11 @@ const axios = require("axios");
 
 /*
   LAITA TRACKER API KEY TÄHÄN.
-  Korvaa PASTE_TRACKER_API_KEY_HERE omalla keylläsi.
-
-  ÄLÄ jaa keytä muille.
+  Koska repo näyttää olevan GitHubissa, parempi olisi käyttää .env / secrets.
+  Mutta jos haluat laittaa suoraan tähän, korvaa alla oleva teksti keylläsi.
 */
-const TRACKER_API_KEY = "dd5a297d-d38a-4ad2-b232-45d03e656aec";
+
+const TRACKER_API_KEY = "LAITA_TRACKER_API_KEY_TÄHÄN";
 
 const RANK_ROLES = [
   "Iron 1",
@@ -131,24 +131,21 @@ function parseRiotId(riotId) {
     throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esim. `Niki#EUW`.");
   }
 
-  const parts = value.split("#");
-  const name = parts[0]?.trim();
-  const tag = parts[1]?.trim();
+  const [name, tag] = value.split("#");
 
   if (!name || !tag) {
     throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esim. `Niki#EUW`.");
   }
 
   return {
-    name,
-    tag,
-    full: `${name}#${tag}`
+    name: name.trim(),
+    tag: tag.trim(),
+    full: `${name.trim()}#${tag.trim()}`
   };
 }
 
 function findRankFromTrackerData(data) {
   const possibleValues = [];
-
   const segments = data?.segments || [];
 
   for (const segment of segments) {
@@ -159,49 +156,29 @@ function findRankFromTrackerData(data) {
 
       if (!stat) continue;
 
-      if (typeof stat.displayValue === "string") {
-        possibleValues.push(stat.displayValue);
-      }
+      if (typeof stat.displayValue === "string") possibleValues.push(stat.displayValue);
+      if (typeof stat.value === "string") possibleValues.push(stat.value);
 
-      if (typeof stat.value === "string") {
-        possibleValues.push(stat.value);
-      }
-
-      if (typeof stat.metadata?.name === "string") {
-        possibleValues.push(stat.metadata.name);
-      }
-
-      if (typeof stat.metadata?.rankName === "string") {
-        possibleValues.push(stat.metadata.rankName);
-      }
-
-      if (typeof stat.metadata?.tierName === "string") {
-        possibleValues.push(stat.metadata.tierName);
-      }
-
-      if (typeof stat.metadata?.currentTierName === "string") {
-        possibleValues.push(stat.metadata.currentTierName);
-      }
-
-      if (typeof stat.metadata?.localizedValue === "string") {
-        possibleValues.push(stat.metadata.localizedValue);
+      if (stat.metadata) {
+        if (typeof stat.metadata.name === "string") possibleValues.push(stat.metadata.name);
+        if (typeof stat.metadata.rankName === "string") possibleValues.push(stat.metadata.rankName);
+        if (typeof stat.metadata.tierName === "string") possibleValues.push(stat.metadata.tierName);
+        if (typeof stat.metadata.currentTierName === "string") possibleValues.push(stat.metadata.currentTierName);
+        if (typeof stat.metadata.localizedValue === "string") possibleValues.push(stat.metadata.localizedValue);
       }
     }
   }
 
   for (const value of possibleValues) {
     const rank = normalizeRank(value);
-
-    if (rank) {
-      return rank;
-    }
+    if (rank) return rank;
   }
 
   return null;
 }
 
 async function fetchRankFromTracker(riotId) {
-  if (!TRACKER_API_KEY || TRACKER_API_KEY === "PASTE_TRACKER_API_KEY_HERE") {
+  if (!TRACKER_API_KEY || TRACKER_API_KEY === "LAITA_TRACKER_API_KEY_TÄHÄN") {
     throw new Error("Tracker API key puuttuu `vlrank.js` tiedostosta.");
   }
 
@@ -221,21 +198,24 @@ async function fetchRankFromTracker(riotId) {
     });
   } catch (error) {
     const status = error.response?.status;
-    const message = error.response?.data?.message || error.response?.data?.errors?.[0]?.message;
+    const apiMessage =
+      error.response?.data?.message ||
+      error.response?.data?.errors?.[0]?.message ||
+      error.message;
 
     if (status === 401 || status === 403) {
       throw new Error("Tracker API key ei kelpaa tai sillä ei ole oikeuksia Valorant API:in.");
     }
 
     if (status === 404) {
-      throw new Error("Pelaajaa ei löytynyt Trackerista. Tarkista Riot ID ja että profiili on olemassa.");
+      throw new Error("Pelaajaa ei löytynyt Trackerista. Tarkista Riot ID.");
     }
 
     if (status === 429) {
-      throw new Error("Tracker API rate limit tuli vastaan. Kokeile hetken päästä uudestaan.");
+      throw new Error("Tracker rate limit tuli vastaan. Kokeile hetken päästä uudestaan.");
     }
 
-    throw new Error(message || `Tracker API error ${status || ""}`.trim());
+    throw new Error(`Tracker API error ${status || ""}: ${apiMessage}`);
   }
 
   const data = response.data?.data;
@@ -248,7 +228,7 @@ async function fetchRankFromTracker(riotId) {
 
   if (!rank) {
     throw new Error(
-      "Rankkia ei löytynyt Trackerin datasta. Pelaaja voi olla unranked, profiili voi olla private tai Tracker API ei palauta Valorant rankkia tällä keyllä."
+      "Rankkia ei löytynyt Trackerin datasta. Profiili voi olla private, pelaaja voi olla unranked tai Tracker API ei palauta Valorant rankkia."
     );
   }
 
@@ -300,7 +280,7 @@ module.exports = {
     .addSubcommand(subcommand =>
       subcommand
         .setName("list")
-        .setDescription("Näyttää kaikki Valorant rank-roolit.")
+        .setDescription("Näyttää kaikki rank-roolit.")
     )
     .addSubcommand(subcommand =>
       subcommand
@@ -367,11 +347,11 @@ module.exports = {
           `❌ Valorant rank verify epäonnistui.\n\n` +
           `**Syy:** ${error.message}\n\n` +
           `Tarkista nämä:\n` +
-          `1. Tracker API key on laitettu \`vlrank.js\` tiedostoon.\n` +
+          `1. Tracker API key on lisätty oikein.\n` +
           `2. Käyttäjä on kirjautunut Tracker.gg:hen Riot-tilillä.\n` +
-          `3. Käyttäjän Tracker-profiili ei ole private.\n` +
+          `3. Tracker-profiili ei ole private.\n` +
           `4. Riot ID on muodossa \`Name#TAG\`.\n` +
-          `5. Discordissa on luotu oikea rank-rooli.\n` +
+          `5. Discordissa on oikea rank-rooli.\n` +
           `6. Botin rooli on rank-roolien yläpuolella.`
         );
       }
