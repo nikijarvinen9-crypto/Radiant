@@ -228,7 +228,7 @@ async function giveRankRole(member, rankName) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName("rank")
+    .setName("vlrank")
     .setDescription("Tarkista Valorant rank ja anna Discord-rooli.")
     .addSubcommand(subcommand =>
       subcommand
