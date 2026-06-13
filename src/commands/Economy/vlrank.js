@@ -2,15 +2,13 @@ const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const axios = require("axios");
 
 /*
-  LAITA API KEY TÄHÄN.
-  ÄLÄ jaa tätä muille.
-
-  Jos tämä on Tracker Network API key, tämä yrittää hakea Trackerista.
+  LAITA TRACKER API KEY TÄHÄN.
+  HUOM: Jos GitHub repo on public, älä laita oikeaa keytä public repoon.
 */
 const TRACKER_API_KEY = "dd5a297d-d38a-4ad2-b232-45d03e656aec";
 
 /*
-  Nämä roolit pitää olla Discord-serverillä täsmälleen samalla nimellä.
+  Discordissa pitää olla nämä roolit täsmälleen samalla nimellä.
   Botin oma rooli pitää olla näiden roolien yläpuolella.
 */
 const RANK_ROLES = [
@@ -41,8 +39,6 @@ const RANK_ROLES = [
   "Radiant"
 ];
 
-const REGIONS = ["eu", "na", "ap", "kr", "latam", "br"];
-
 function cleanText(text) {
   return String(text || "")
     .toLowerCase()
@@ -50,6 +46,28 @@ function cleanText(text) {
     .replaceAll("-", " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function parseRiotId(riotId) {
+  const value = String(riotId || "").trim();
+
+  if (!value.includes("#")) {
+    throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esim. `Niki#EUW`.");
+  }
+
+  const split = value.split("#");
+  const name = split[0];
+  const tag = split[1];
+
+  if (!name || !tag) {
+    throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esim. `Niki#EUW`.");
+  }
+
+  return {
+    name: name.trim(),
+    tag: tag.trim(),
+    full: `${name.trim()}#${tag.trim()}`
+  };
 }
 
 function normalizeRank(rankText) {
@@ -123,38 +141,20 @@ function normalizeRank(rankText) {
   if (aliases[text]) return aliases[text];
 
   for (const role of RANK_ROLES) {
-    if (text.includes(cleanText(role))) return role;
+    if (text.includes(cleanText(role))) {
+      return role;
+    }
   }
 
   return null;
 }
 
-function parseRiotId(riotid) {
-  const value = String(riotid || "").trim();
-
-  if (!value.includes("#")) {
-    throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esim. `Niki#EUW`.");
+async function fetchRankFromTracker(riotId) {
+  if (!TRACKER_API_KEY || TRACKER_API_KEY === "dd5a297d-d38a-4ad2-b232-45d03e656aec") {
+    throw new Error("API key puuttuu `vlrank.js` tiedostosta.");
   }
 
-  const [name, tag] = value.split("#");
-
-  if (!name || !tag) {
-    throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esim. `Niki#EUW`.");
-  }
-
-  return {
-    name: name.trim(),
-    tag: tag.trim(),
-    full: `${name.trim()}#${tag.trim()}`
-  };
-}
-
-async function fetchRankFromTracker(riotid) {
-  if (!TRACKER_API_KEY || TRACKER_API_KEY === "LAITA_API_KEY_TÄHÄN") {
-    throw new Error("API key puuttuu rank.js tiedostosta.");
-  }
-
-  const parsed = parseRiotId(riotid);
+  const parsed = parseRiotId(riotId);
   const encoded = encodeURIComponent(parsed.full);
 
   const url = `https://public-api.tracker.gg/v2/valorant/standard/profile/riot/${encoded}`;
@@ -195,14 +195,14 @@ async function fetchRankFromTracker(riotid) {
 
     if (rank) {
       return {
-        riotid: parsed.full,
+        riotId: parsed.full,
         rank,
         profileUrl: `https://tracker.gg/valorant/profile/riot/${encodeURIComponent(parsed.name)}%23${encodeURIComponent(parsed.tag)}/overview`
       };
     }
   }
 
-  throw new Error("Rankkia ei löytynyt. Käyttäjän Tracker-profiili voi olla private tai Tracker API ei anna Valorant rankkia.");
+  throw new Error("Rankkia ei löytynyt. Tracker-profiili voi olla private tai API ei anna Valorant rankkia.");
 }
 
 async function removeOldRankRoles(member) {
@@ -227,6 +227,8 @@ async function giveRankRole(member, rankName) {
 }
 
 module.exports = {
+  name: "vlrank",
+
   data: new SlashCommandBuilder()
     .setName("vlrank")
     .setDescription("Tarkista Valorant rank ja anna Discord-rooli.")
@@ -245,10 +247,22 @@ module.exports = {
       subcommand
         .setName("list")
         .setDescription("Näyttää kaikki rank-roolit jotka pitää luoda.")
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("test")
+        .setDescription("Testaa että /vlrank command toimii.")
     ),
 
   async execute(interaction) {
     const subcommand = interaction.options.getSubcommand();
+
+    if (subcommand === "test") {
+      return interaction.reply({
+        content: "✅ `/vlrank` toimii oikein!",
+        ephemeral: true
+      });
+    }
 
     if (subcommand === "list") {
       const embed = new EmbedBuilder()
@@ -265,10 +279,10 @@ module.exports = {
     if (subcommand === "verify") {
       await interaction.deferReply({ ephemeral: true });
 
-      const riotid = interaction.options.getString("riotid");
+      const riotId = interaction.options.getString("riotid");
 
       try {
-        const result = await fetchRankFromTracker(riotid);
+        const result = await fetchRankFromTracker(riotId);
         const member = await interaction.guild.members.fetch(interaction.user.id);
         const role = await giveRankRole(member, result.rank);
 
@@ -278,7 +292,7 @@ module.exports = {
           .addFields(
             {
               name: "Riot ID",
-              value: result.riotid,
+              value: result.riotId,
               inline: true
             },
             {
@@ -296,10 +310,10 @@ module.exports = {
         return interaction.editReply({ embeds: [embed] });
       } catch (error) {
         return interaction.editReply(
-          `Rank verify epäonnistui.\n\n` +
+          `❌ Rank verify epäonnistui.\n\n` +
           `**Syy:** ${error.message}\n\n` +
           `Tarkista nämä:\n` +
-          `1. API key on laitettu rank.js tiedoston alkuun.\n` +
+          `1. API key on laitettu \`vlrank.js\` tiedoston alkuun.\n` +
           `2. Käyttäjän Tracker-profiili ei ole private.\n` +
           `3. Käyttäjä on kirjautunut Trackeriin Riot-tilillä.\n` +
           `4. Riot ID on muodossa \`Name#TAG\`.\n` +
