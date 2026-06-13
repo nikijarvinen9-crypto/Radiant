@@ -1,13 +1,30 @@
-const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  PermissionFlagsBits,
+  REST,
+  Routes
+} = require("discord.js");
+
 const axios = require("axios");
 
 /*
-  LAITA TRACKER API KEY TÄHÄN.
-  Koska repo näyttää olevan GitHubissa, parempi olisi käyttää .env / secrets.
-  Mutta jos haluat laittaa suoraan tähän, korvaa alla oleva teksti keylläsi.
+  TÄRKEÄ:
+  Laita nämä Railway -> Variables kohtaan:
+
+  TOKEN=sinun_discord_bot_token
+  CLIENT_ID=sinun_botin_client_id
+  GUILD_ID=sinun_discord_serverin_id
+  TRACKER_API_KEY=sinun_tracker_api_key
+
+  Tämä tiedosto rekisteröi /vlrank komennon automaattisesti,
+  kun botti käynnistyy ja tämä tiedosto ladataan.
 */
 
-const TRACKER_API_KEY = "LAITA_TRACKER_API_KEY_TÄHÄN";
+const TOKEN = process.env.TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
+const TRACKER_API_KEY = process.env.TRACKER_API_KEY;
 
 const RANK_ROLES = [
   "Iron 1",
@@ -36,6 +53,41 @@ const RANK_ROLES = [
   "Immortal 3",
   "Radiant"
 ];
+
+const commandData = new SlashCommandBuilder()
+  .setName("vlrank")
+  .setDescription("Tarkistaa Valorant rankin Trackerista ja antaa Discord rank-roolin.")
+  .addStringOption(option =>
+    option
+      .setName("riotid")
+      .setDescription("Riot ID muodossa Name#TAG")
+      .setRequired(true)
+  );
+
+async function autoRegisterCommand() {
+  if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
+    console.log("[VLRank] Slash commandia ei rekisteröity, koska TOKEN / CLIENT_ID / GUILD_ID puuttuu.");
+    return;
+  }
+
+  try {
+    const rest = new REST({ version: "10" }).setToken(TOKEN);
+
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      {
+        body: [commandData.toJSON()]
+      }
+    );
+
+    console.log("[VLRank] ✅ /vlrank rekisteröity Discordiin onnistuneesti.");
+  } catch (error) {
+    console.error("[VLRank] ❌ /vlrank rekisteröinti epäonnistui:");
+    console.error(error);
+  }
+}
+
+autoRegisterCommand();
 
 function cleanText(text) {
   return String(text || "")
@@ -128,46 +180,38 @@ function parseRiotId(riotId) {
   const value = String(riotId || "").trim();
 
   if (!value.includes("#")) {
-    throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esim. `Niki#EUW`.");
+    throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esimerkiksi `Player#EUW`.");
   }
 
-  const [name, tag] = value.split("#");
+  const parts = value.split("#");
 
-  if (!name || !tag) {
-    throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esim. `Niki#EUW`.");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error("Riot ID pitää olla muodossa `Name#TAG`, esimerkiksi `Player#EUW`.");
   }
 
   return {
-    name: name.trim(),
-    tag: tag.trim(),
-    full: `${name.trim()}#${tag.trim()}`
+    name: parts[0].trim(),
+    tag: parts[1].trim(),
+    full: `${parts[0].trim()}#${parts[1].trim()}`
   };
 }
 
 function findRankFromTrackerData(data) {
   const possibleValues = [];
-  const segments = data?.segments || [];
 
-  for (const segment of segments) {
-    const stats = segment?.stats || {};
+  function scan(obj) {
+    if (!obj || typeof obj !== "object") return;
 
-    for (const key of Object.keys(stats)) {
-      const stat = stats[key];
-
-      if (!stat) continue;
-
-      if (typeof stat.displayValue === "string") possibleValues.push(stat.displayValue);
-      if (typeof stat.value === "string") possibleValues.push(stat.value);
-
-      if (stat.metadata) {
-        if (typeof stat.metadata.name === "string") possibleValues.push(stat.metadata.name);
-        if (typeof stat.metadata.rankName === "string") possibleValues.push(stat.metadata.rankName);
-        if (typeof stat.metadata.tierName === "string") possibleValues.push(stat.metadata.tierName);
-        if (typeof stat.metadata.currentTierName === "string") possibleValues.push(stat.metadata.currentTierName);
-        if (typeof stat.metadata.localizedValue === "string") possibleValues.push(stat.metadata.localizedValue);
+    for (const value of Object.values(obj)) {
+      if (typeof value === "string") {
+        possibleValues.push(value);
+      } else if (typeof value === "object") {
+        scan(value);
       }
     }
   }
+
+  scan(data);
 
   for (const value of possibleValues) {
     const rank = normalizeRank(value);
@@ -178,8 +222,8 @@ function findRankFromTrackerData(data) {
 }
 
 async function fetchRankFromTracker(riotId) {
-  if (!TRACKER_API_KEY || TRACKER_API_KEY === "LAITA_TRACKER_API_KEY_TÄHÄN") {
-    throw new Error("Tracker API key puuttuu `vlrank.js` tiedostosta.");
+  if (!TRACKER_API_KEY) {
+    throw new Error("TRACKER_API_KEY puuttuu Railway Variables kohdasta.");
   }
 
   const parsed = parseRiotId(riotId);
@@ -204,7 +248,7 @@ async function fetchRankFromTracker(riotId) {
       error.message;
 
     if (status === 401 || status === 403) {
-      throw new Error("Tracker API key ei kelpaa tai sillä ei ole oikeuksia Valorant API:in.");
+      throw new Error("Tracker API key ei kelpaa tai sillä ei ole oikeuksia Valorant APIin.");
     }
 
     if (status === 404) {
@@ -212,7 +256,7 @@ async function fetchRankFromTracker(riotId) {
     }
 
     if (status === 429) {
-      throw new Error("Tracker rate limit tuli vastaan. Kokeile hetken päästä uudestaan.");
+      throw new Error("Tracker rate limit tuli vastaan. Kokeile myöhemmin uudestaan.");
     }
 
     throw new Error(`Tracker API error ${status || ""}: ${apiMessage}`);
@@ -228,7 +272,7 @@ async function fetchRankFromTracker(riotId) {
 
   if (!rank) {
     throw new Error(
-      "Rankkia ei löytynyt Trackerin datasta. Profiili voi olla private, pelaaja voi olla unranked tai Tracker API ei palauta Valorant rankkia."
+      "Rankkia ei löytynyt. Profiili voi olla private, unranked tai Tracker ei palauta rankkia API:n kautta."
     );
   }
 
@@ -251,7 +295,17 @@ async function giveRankRole(member, rankName) {
   const role = member.guild.roles.cache.find(r => r.name === rankName);
 
   if (!role) {
-    throw new Error(`Discord-roolia "${rankName}" ei löytynyt. Luo se ensin serverille.`);
+    throw new Error(`Discordista ei löytynyt roolia "${rankName}". Luo se ensin serverille.`);
+  }
+
+  const botMember = await member.guild.members.fetchMe();
+
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    throw new Error("Botilta puuttuu Manage Roles permission.");
+  }
+
+  if (role.position >= botMember.roles.highest.position) {
+    throw new Error(`Botin rooli pitää siirtää roolin "${rankName}" yläpuolelle.`);
   }
 
   await removeOldRankRoles(member);
@@ -263,98 +317,55 @@ async function giveRankRole(member, rankName) {
 module.exports = {
   name: "vlrank",
 
-  data: new SlashCommandBuilder()
-    .setName("vlrank")
-    .setDescription("Tarkista Valorant rank Trackerista ja anna Discord-rooli.")
-    .addSubcommand(subcommand =>
-      subcommand
-        .setName("verify")
-        .setDescription("Tarkistaa Valorant rankin Trackerista.")
-        .addStringOption(option =>
-          option
-            .setName("riotid")
-            .setDescription("Riot ID muodossa Name#TAG")
-            .setRequired(true)
-        )
-    )
-    .addSubcommand(subcommand =>
-      subcommand
-        .setName("list")
-        .setDescription("Näyttää kaikki rank-roolit.")
-    )
-    .addSubcommand(subcommand =>
-      subcommand
-        .setName("test")
-        .setDescription("Testaa että /vlrank toimii.")
-    ),
+  data: commandData,
 
   async execute(interaction) {
-    const subcommand = interaction.options.getSubcommand();
+    await interaction.deferReply({ ephemeral: true });
 
-    if (subcommand === "test") {
-      return interaction.reply({
-        content: "✅ `/vlrank` toimii oikein!",
-        ephemeral: true
-      });
-    }
+    const riotId = interaction.options.getString("riotid");
 
-    if (subcommand === "list") {
+    try {
+      const result = await fetchRankFromTracker(riotId);
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const role = await giveRankRole(member, result.rank);
+
       const embed = new EmbedBuilder()
-        .setTitle("Valorant rank-roolit")
-        .setDescription(RANK_ROLES.map(role => `• ${role}`).join("\n"))
-        .setColor(0xff4655);
+        .setTitle("✅ Valorant rank verified")
+        .setDescription(`Sinulle annettiin rooli **${role.name}**.`)
+        .addFields(
+          {
+            name: "Riot ID",
+            value: result.riotId,
+            inline: true
+          },
+          {
+            name: "Rank",
+            value: result.rank,
+            inline: true
+          },
+          {
+            name: "Tracker",
+            value: `[Avaa profiili](${result.profileUrl})`
+          }
+        )
+        .setColor(0x00ff99);
 
-      return interaction.reply({
-        embeds: [embed],
-        ephemeral: true
-      });
-    }
+      return interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+      console.error("[VLRank Error]", error);
 
-    if (subcommand === "verify") {
-      await interaction.deferReply({ ephemeral: true });
-
-      const riotId = interaction.options.getString("riotid");
-
-      try {
-        const result = await fetchRankFromTracker(riotId);
-        const member = await interaction.guild.members.fetch(interaction.user.id);
-        const role = await giveRankRole(member, result.rank);
-
-        const embed = new EmbedBuilder()
-          .setTitle("✅ Valorant rank verified")
-          .setDescription(`Sinulle annettiin rooli **${role.name}**.`)
-          .addFields(
-            {
-              name: "Riot ID",
-              value: result.riotId,
-              inline: true
-            },
-            {
-              name: "Rank",
-              value: result.rank,
-              inline: true
-            },
-            {
-              name: "Tracker",
-              value: `[Avaa profiili](${result.profileUrl})`
-            }
-          )
-          .setColor(0x00ff99);
-
-        return interaction.editReply({ embeds: [embed] });
-      } catch (error) {
-        return interaction.editReply(
-          `❌ Valorant rank verify epäonnistui.\n\n` +
-          `**Syy:** ${error.message}\n\n` +
-          `Tarkista nämä:\n` +
-          `1. Tracker API key on lisätty oikein.\n` +
-          `2. Käyttäjä on kirjautunut Tracker.gg:hen Riot-tilillä.\n` +
-          `3. Tracker-profiili ei ole private.\n` +
-          `4. Riot ID on muodossa \`Name#TAG\`.\n` +
-          `5. Discordissa on oikea rank-rooli.\n` +
-          `6. Botin rooli on rank-roolien yläpuolella.`
-        );
-      }
+      return interaction.editReply(
+        `❌ Valorant rank verify epäonnistui.\n\n` +
+        `**Syy:** ${error.message}\n\n` +
+        `Tarkista nämä:\n` +
+        `1. Railway Variables kohdassa on \`TRACKER_API_KEY\`.\n` +
+        `2. Railway Variables kohdassa on \`TOKEN\`, \`CLIENT_ID\` ja \`GUILD_ID\`.\n` +
+        `3. Discordissa on roolit täsmälleen nimillä esim. \`Gold 1\`, \`Diamond 2\`, \`Radiant\`.\n` +
+        `4. Botilla on \`Manage Roles\` permission.\n` +
+        `5. Botin oma rooli on rank-roolien yläpuolella.\n` +
+        `6. Riot ID on muodossa \`Name#TAG\`.\n` +
+        `7. Tracker-profiili ei ole private.`
+      );
     }
   }
 };
