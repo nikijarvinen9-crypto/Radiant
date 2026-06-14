@@ -15,21 +15,20 @@ const fs = require("fs");
 const path = require("path");
 
 /*
-  RADIANT PLAZA VALORANT RANK BOT
-  Command: /rank
-  Owner tekee panelin.
-  User painaa Find Rank -> kirjoittaa Riot ID:n muodossa Name#TAG.
-  Botti hakee Trackerista rankin ja antaa Discord-roolin.
-  Botti päivittää rankkeja automaattisesti X tunnin välein.
+  RADIANT PLAZA VALORANT TRACKER BOT
 
-  Railway variables:
-  TRACKER_API_KEY=...
-  OWNER_IDS=123456789,987654321
-  RANK_BANNER_URL=https://...
+  Railway Variables:
+  TRACKER_API_KEY=sinun_tracker_api_key
+  OWNER_IDS=sinun_discord_id
+  RANK_BANNER_URL=https://kuvalinkki/banner.png
   RANK_UPDATE_HOURS=6
 
+  Komento:
+  /vlrank
+
   HUOM:
-  Tracker.gg Valorant API voi palauttaa 403, koska Valorant ei ole aina public Tracker API:ssa.
+  Discordissa ei ole oikeasti keltaista button styleä.
+  Siksi nappi on Discordin sininen nappi + keltainen emoji.
 */
 
 const TRACKER_API_KEY = process.env.TRACKER_API_KEY || "";
@@ -45,9 +44,9 @@ const BANNER_URL =
 const UPDATE_HOURS = Number(process.env.RANK_UPDATE_HOURS || 6);
 const UPDATE_MS = Math.max(1, UPDATE_HOURS) * 60 * 60 * 1000;
 
-const BUTTON_ID = "radiant_rank_find_button";
-const MODAL_ID = "radiant_rank_modal";
-const RIOT_ID_INPUT = "radiant_rank_riot_id";
+const BUTTON_ID = "radiant_plaza_find_rank";
+const MODAL_ID = "radiant_plaza_rank_modal";
+const RIOT_ID_INPUT = "radiant_plaza_riot_id";
 
 const LOCAL_DB_PATH = path.join(__dirname, "rank_links.json");
 
@@ -98,7 +97,7 @@ const ROLE_COLORS = {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName("rank")
+    .setName("vlrank")
     .setDescription("Lähettää Valorant rank verification panelin.")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
@@ -117,19 +116,23 @@ module.exports = {
       .setTitle("⭐ Radiant Plaza Rank Verification")
       .setDescription(
         [
-          "**Get your Valorant rank role automatically.**",
+          "**Verify your Valorant rank and get your Discord role automatically.**",
           "",
-          "Press the yellow **Find Rank** button below.",
-          "Write your Riot ID in this format:",
+          "Press the **⭐ Find Rank** button below.",
           "",
+          "**How it works:**",
+          "1. Press the button.",
+          "2. Write your Valorant Riot ID.",
+          "3. The bot checks your Tracker profile.",
+          "4. You get the correct Discord rank role.",
+          "",
+          "**Riot ID format:**",
           "`Name#TAG`",
           "",
-          "Example:",
+          "**Example:**",
           "`RadiantPlayer#EUW`",
           "",
-          "After this, the bot checks your Tracker profile and gives you the matching Discord rank role.",
-          "",
-          "Your role will also update automatically if your Valorant rank changes.",
+          "Your rank role will also update automatically if your rank changes.",
         ].join("\n")
       )
       .setImage(BANNER_URL)
@@ -140,7 +143,7 @@ module.exports = {
       new ButtonBuilder()
         .setCustomId(BUTTON_ID)
         .setLabel("Find Rank")
-        .setEmoji("🔎")
+        .setEmoji("⭐")
         .setStyle(ButtonStyle.Primary)
     );
 
@@ -150,7 +153,7 @@ module.exports = {
     });
 
     return interaction.reply({
-      content: "✅ Rank panel lähetetty tähän kanavaan.",
+      content: "✅ Valorant rank panel lähetetty tähän kanavaan.",
       ephemeral: true,
     });
   },
@@ -176,32 +179,38 @@ async function ensureSetup(client) {
         return handleRankModal(interaction);
       }
     } catch (err) {
-      console.error("[Radiant Rank] interaction error:", err);
+      console.error("[Radiant Rank] Interaction error:", err);
 
       if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({
-          content: "❌ Tapahtui virhe. Tarkista botin logs Railwaystä.",
-          ephemeral: true,
-        }).catch(() => {});
+        await interaction
+          .reply({
+            content: "❌ Tapahtui virhe. Tarkista Railway logs.",
+            ephemeral: true,
+          })
+          .catch(() => {});
       }
     }
   });
 
   client.once("ready", async () => {
-    console.log(`[Radiant Rank] Logged in as ${client.user.tag}`);
+    console.log(`[Radiant Rank] Ready as ${client.user.tag}`);
 
     if (!updateLoopStarted) {
       updateLoopStarted = true;
 
-      setTimeout(() => updateAllLinkedRanks(client), 30_000);
+      setTimeout(() => {
+        updateAllLinkedRanks(client).catch((err) => {
+          console.error("[Radiant Rank] First auto update failed:", err);
+        });
+      }, 30_000);
 
       setInterval(() => {
         updateAllLinkedRanks(client).catch((err) => {
-          console.error("[Radiant Rank] auto update failed:", err);
+          console.error("[Radiant Rank] Auto update failed:", err);
         });
       }, UPDATE_MS);
 
-      console.log(`[Radiant Rank] Auto update every ${UPDATE_HOURS}h started.`);
+      console.log(`[Radiant Rank] Auto update started every ${UPDATE_HOURS}h.`);
     }
   });
 }
@@ -211,7 +220,7 @@ async function handleRankButton(interaction) {
     .setCustomId(MODAL_ID)
     .setTitle("Find your Valorant rank");
 
-  const riotIdInput = new TextInputBuilder()
+  const riotInput = new TextInputBuilder()
     .setCustomId(RIOT_ID_INPUT)
     .setLabel("Valorant Riot ID")
     .setPlaceholder("Example: Player#EUW")
@@ -220,7 +229,7 @@ async function handleRankButton(interaction) {
     .setRequired(true)
     .setStyle(TextInputStyle.Short);
 
-  modal.addComponents(new ActionRowBuilder().addComponents(riotIdInput));
+  modal.addComponents(new ActionRowBuilder().addComponents(riotInput));
 
   return interaction.showModal(modal);
 }
@@ -251,12 +260,12 @@ async function handleRankModal(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   if (!interaction.guild) {
-    return interaction.editReply("❌ Tätä voi käyttää vain serverillä.");
+    return interaction.editReply("❌ Tätä voi käyttää vain Discord serverillä.");
   }
 
   if (!TRACKER_API_KEY) {
     return interaction.editReply(
-      "❌ Botilta puuttuu `TRACKER_API_KEY` Railway Variables kohdasta."
+      "❌ Botilta puuttuu `TRACKER_API_KEY`. Lisää se Railway → Variables."
     );
   }
 
@@ -281,12 +290,18 @@ async function handleRankModal(interaction) {
       message: err.message,
     });
 
+    if (err?.response?.status === 401) {
+      return interaction.editReply(
+        "❌ Tracker API key on väärä tai ei toimi. Tarkista Railway `TRACKER_API_KEY`."
+      );
+    }
+
     if (err?.response?.status === 403) {
       return interaction.editReply(
         [
           "❌ Tracker palautti **403 Forbidden**.",
           "",
-          "Tämä tarkoittaa yleensä sitä, että Tracker ei salli tätä Valorant endpointtia/API keyllä.",
+          "Tämä tarkoittaa yleensä, että Tracker ei salli tätä Valorant API hakua tällä API keyllä.",
           "Tarkista myös, että pelaajan Tracker-profiili on public.",
         ].join("\n")
       );
@@ -294,30 +309,29 @@ async function handleRankModal(interaction) {
 
     if (err?.response?.status === 404) {
       return interaction.editReply(
-        "❌ Pelaajaa ei löytynyt Trackerista. Tarkista että Riot ID on oikein ja profiili on public."
+        "❌ Pelaajaa ei löytynyt Trackerista. Tarkista Riot ID ja että profiili on public."
       );
     }
 
     return interaction.editReply(
-      "❌ Rankin haku epäonnistui. Tarkista API key, Riot ID ja Railway logs."
+      "❌ Rankin haku epäonnistui. Tarkista Riot ID, API key ja Railway logs."
     );
   }
 
   if (!rank || !RANK_ROLES.includes(rank)) {
     return interaction.editReply(
       [
-        "❌ En löytänyt pelaajan rankkia Tracker datasta.",
+        "❌ En löytänyt pelaajan Valorant rankkia Tracker datasta.",
         "",
         "Mahdolliset syyt:",
-        "- Tracker profiili ei ole public",
-        "- pelaaja ei ole pelannut competitivea",
-        "- Tracker ei anna Valorant rankkia API:n kautta",
+        "• Tracker profiili ei ole public",
+        "• pelaaja ei ole pelannut competitivea",
+        "• Tracker ei anna Valorant rankkia API:n kautta",
       ].join("\n")
     );
   }
 
   const member = await interaction.guild.members.fetch(interaction.user.id);
-
   const result = await applyRankRole(interaction.guild, member, rank);
 
   if (!result.ok) {
@@ -365,7 +379,8 @@ async function fetchValorantTrackerProfile(riotId) {
       lastError = err;
 
       const status = err?.response?.status;
-      if (status === 404 || status === 403 || status === 401) {
+
+      if (status === 401 || status === 403 || status === 404) {
         throw err;
       }
     }
@@ -375,35 +390,38 @@ async function fetchValorantTrackerProfile(riotId) {
 }
 
 function extractRank(data) {
-  const possible = [];
+  const possibleValues = [];
 
   walkObject(data, (key, value) => {
     if (typeof value !== "string") return;
 
-    const k = String(key).toLowerCase();
-    const v = value.trim();
+    const lowerKey = String(key).toLowerCase();
+    const text = value.trim();
 
     if (
-      k.includes("rank") ||
-      k.includes("tier") ||
-      k.includes("rating") ||
-      k.includes("division")
+      lowerKey.includes("rank") ||
+      lowerKey.includes("tier") ||
+      lowerKey.includes("rating") ||
+      lowerKey.includes("division")
     ) {
-      possible.push(v);
+      possibleValues.push(text);
     }
   });
 
-  for (const value of possible) {
+  for (const value of possibleValues) {
     const normalized = normalizeRank(value);
     if (normalized) return normalized;
   }
 
   const json = JSON.stringify(data);
 
-  for (const role of [...RANK_ROLES].reverse()) {
-    const escaped = role.replace(" ", "\\s*");
+  for (const rank of [...RANK_ROLES].reverse()) {
+    const escaped = rank.replace(" ", "\\s*");
     const regex = new RegExp(escaped, "i");
-    if (regex.test(json)) return role;
+
+    if (regex.test(json)) {
+      return rank;
+    }
   }
 
   return null;
@@ -429,26 +447,28 @@ function normalizeRank(value) {
 
   if (!match) return null;
 
-  const name = capitalize(match[1].toLowerCase());
+  const rankName = capitalize(match[1].toLowerCase());
   const number = match[2];
-
-  const rank = `${name} ${number}`;
+  const rank = `${rankName} ${number}`;
 
   return RANK_ROLES.includes(rank) ? rank : null;
 }
 
-function walkObject(obj, cb) {
+function walkObject(obj, callback) {
   if (!obj || typeof obj !== "object") return;
 
   if (Array.isArray(obj)) {
-    for (const item of obj) walkObject(item, cb);
+    for (const item of obj) {
+      walkObject(item, callback);
+    }
     return;
   }
 
   for (const [key, value] of Object.entries(obj)) {
-    cb(key, value);
+    callback(key, value);
+
     if (value && typeof value === "object") {
-      walkObject(value, cb);
+      walkObject(value, callback);
     }
   }
 }
@@ -467,25 +487,28 @@ async function applyRankRole(guild, member, rank) {
   if (role.position >= botMember.roles.highest.position) {
     return {
       ok: false,
-      message:
-        `❌ Botin rooli ei ole tarpeeksi korkealla. Siirrä botin korkein rooli ylemmäs kuin **${rank}**.`,
+      message: `❌ Botin rooli ei ole tarpeeksi korkealla. Siirrä botin rooli ylemmäs kuin **${rank}**.`,
     };
   }
 
   const rolesToRemove = [];
 
   for (const roleName of RANK_ROLES) {
-    const found = guild.roles.cache.find((r) => r.name === roleName);
-    if (found && found.id !== role.id && member.roles.cache.has(found.id)) {
-      if (found.position < botMember.roles.highest.position) {
-        rolesToRemove.push(found);
-      }
+    const oldRole = guild.roles.cache.find((r) => r.name === roleName);
+
+    if (
+      oldRole &&
+      oldRole.id !== role.id &&
+      member.roles.cache.has(oldRole.id) &&
+      oldRole.position < botMember.roles.highest.position
+    ) {
+      rolesToRemove.push(oldRole);
     }
   }
 
   if (rolesToRemove.length > 0) {
     await member.roles.remove(rolesToRemove).catch((err) => {
-      console.error("[Radiant Rank] remove old roles failed:", err);
+      console.error("[Radiant Rank] Failed to remove old roles:", err);
     });
   }
 
@@ -501,6 +524,7 @@ async function applyRankRole(guild, member, rank) {
 
 async function getOrCreateRankRole(guild, rank) {
   let role = guild.roles.cache.find((r) => r.name === rank);
+
   if (role) return role;
 
   const baseName = rank.split(" ")[0];
@@ -520,11 +544,11 @@ async function updateAllLinkedRanks(client) {
   const links = await getAllLinks();
 
   if (!links.length) {
-    console.log("[Radiant Rank] No linked users to update.");
+    console.log("[Radiant Rank] No linked users.");
     return;
   }
 
-  console.log(`[Radiant Rank] Updating ${links.length} linked users...`);
+  console.log(`[Radiant Rank] Updating ${links.length} users...`);
 
   for (const link of links) {
     try {
@@ -555,13 +579,16 @@ async function updateAllLinkedRanks(client) {
       });
 
       if (oldRank && oldRank !== newRank) {
-        await sendRankDM(member.user, newRank, true, link.riot_id, oldRank).catch(() => {});
+        await sendRankDM(member.user, newRank, true, link.riot_id, oldRank).catch(
+          () => {}
+        );
+
         console.log(`[Radiant Rank] ${link.riot_id}: ${oldRank} -> ${newRank}`);
       }
     } catch (err) {
-      console.error("[Radiant Rank] update user failed:", {
-        user: link.discord_id,
-        riot: link.riot_id,
+      console.error("[Radiant Rank] Failed to update user:", {
+        discord_id: link.discord_id,
+        riot_id: link.riot_id,
         status: err?.response?.status,
         message: err.message,
       });
@@ -594,11 +621,14 @@ async function sendRankDM(user, rank, changed, riotId, oldRank = null) {
         "",
         "**Your benefits:**",
         "• You now have your correct Valorant rank role.",
-        "• You can access rank-based channels that your server has enabled.",
-        "• Your role can update automatically when your rank changes.",
+        "• You can access rank-based channels if the server has them.",
+        "• Your rank can update automatically when your Valorant rank changes.",
         "",
         "**Unlocked rank level:**",
-        unlocked.slice(-8).map((r) => `• ${r}`).join("\n"),
+        unlocked
+          .slice(-8)
+          .map((r) => `• ${r}`)
+          .join("\n"),
       ].join("\n")
     )
     .setFooter({ text: "Radiant Plaza • Community Marketplace" })
@@ -614,9 +644,11 @@ async function initDatabase() {
 
       pgPool = new Pool({
         connectionString: process.env.DATABASE_URL,
-        ssl: process.env.DATABASE_URL.includes("railway")
-          ? { rejectUnauthorized: false }
-          : undefined,
+        ssl:
+          process.env.DATABASE_URL.includes("railway") ||
+          process.env.DATABASE_URL.includes("proxy.rlwy.net")
+            ? { rejectUnauthorized: false }
+            : undefined,
       });
 
       await pgPool.query(`
@@ -634,7 +666,10 @@ async function initDatabase() {
       return;
     } catch (err) {
       pgPool = null;
-      console.warn("[Radiant Rank] PostgreSQL failed, using local JSON fallback:", err.message);
+      console.warn(
+        "[Radiant Rank] PostgreSQL failed, using JSON fallback:",
+        err.message
+      );
     }
   }
 
@@ -672,12 +707,16 @@ async function saveLink(link) {
   }
 
   const links = readLocalLinks();
+
   const index = links.findIndex(
     (x) => x.discord_id === link.discord_id && x.guild_id === link.guild_id
   );
 
-  if (index >= 0) links[index] = link;
-  else links.push(link);
+  if (index >= 0) {
+    links[index] = link;
+  } else {
+    links.push(link);
+  }
 
   fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(links, null, 2));
 }
@@ -710,7 +749,10 @@ function cleanRiotId(value) {
 function isValidRiotId(value) {
   if (!value.includes("#")) return false;
 
-  const [name, tag] = value.split("#");
+  const parts = value.split("#");
+  if (parts.length !== 2) return false;
+
+  const [name, tag] = parts;
 
   if (!name || !tag) return false;
   if (name.length < 2 || tag.length < 2) return false;
